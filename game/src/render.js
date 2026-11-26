@@ -220,6 +220,7 @@ export function renderScene(ctx, w, h, flight, island, time) {
 
   // ---- Rings -------------------------------------------------------------------
   drawRings(ctx, cam, island, flight, time);
+  drawBonusRings(ctx, cam, island, flight, time);
 
   // ---- Storm beacon -------------------------------------------------------------
   drawBeacon(ctx, cam, island, time, flight.missionId === 'storm');
@@ -257,6 +258,27 @@ export function renderScene(ctx, w, h, flight, island, time) {
 
   // ---- The plane -----------------------------------------------------------------------
   drawPlane(ctx, w, h, flight, time);
+
+  // ---- Wind streaks at high speed -------------------------------------------
+  if (flight.phase === 'flying' && flight.speed > 62) {
+    const strength = clamp((flight.speed - 62) / 30, 0, 1);
+    ctx.save();
+    ctx.strokeStyle = `rgba(255, 255, 255, ${0.28 * strength})`;
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 10; i++) {
+      const seed = i * 137.5 + Math.floor(time * 9) * 61.7;
+      const x = ((seed * 7919) % 1000) / 1000;
+      const y = ((seed * 104729) % 1000) / 1000;
+      const sx = x * w;
+      const sy = y * h;
+      const len = 26 + strength * 40;
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(sx - len * 0.25, sy + len);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
 }
 
 // The ground right under the camera never survives the terrain grid's near
@@ -297,6 +319,42 @@ function drawNearGround(ctx, cam, island, flight) {
     ctx.lineTo(lane.bl[0], lane.bl[1]);
     ctx.closePath();
     ctx.fill();
+  }
+}
+
+function drawBonusRings(ctx, cam, island, flight, time) {
+  const pulse = 0.7 + Math.sin(time * 5) * 0.3;
+  for (const ring of island.bonusRings) {
+    if (flight._bonusHit && flight._bonusHit.has(ring.index)) continue;
+    const pts = [];
+    const steps = 20;
+    for (let s = 0; s <= steps; s++) {
+      const a = (s / steps) * TAU;
+      const p = project(cam, ring.x + Math.cos(a) * ring.radius, ring.y + Math.sin(a) * ring.radius, ring.z);
+      if (p) pts.push(p);
+    }
+    if (pts.length < 4) continue;
+    ctx.save();
+    ctx.globalAlpha = 0.95;
+    ctx.strokeStyle = '#ffd34d';
+    ctx.lineWidth = 4 * pulse + 1;
+    ctx.shadowColor = '#ffd34d';
+    ctx.shadowBlur = 14;
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let j = 1; j < pts.length; j++) ctx.lineTo(pts[j].x, pts[j].y);
+    ctx.closePath();
+    ctx.stroke();
+    ctx.restore();
+    const top = project(cam, ring.x, ring.y + ring.radius + 8, ring.z);
+    if (top && top.d < 1200) {
+      ctx.save();
+      ctx.fillStyle = '#ffd34d';
+      ctx.font = `bold ${clamp(900 / top.d, 11, 22)}px system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText('+750', top.x, top.y);
+      ctx.restore();
+    }
   }
 }
 

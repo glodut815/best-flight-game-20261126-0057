@@ -111,6 +111,9 @@ export function drawHUD(ctx, w, h, flight, island, mission) {
   // ---- Bottom-left: artificial horizon ----------------------------------------
   drawAttitude(ctx, 78, h - 78, 62, flight);
 
+  // ---- Bottom-centre: minimap ---------------------------------------------------
+  drawMinimap(ctx, w, h, flight, island);
+
   // ---- Bottom-right: fuel and throttle -----------------------------------------
   panel(ctx, w - 214, h - 132, 200, 120);
   label(ctx, 'FUEL', w - 200, h - 108, 11);
@@ -206,9 +209,105 @@ function drawAttitude(ctx, cx, cy, r, flight) {
   ctx.fillText('ATTITUDE', cx, cy + r + 16);
 }
 
+function drawMinimap(ctx, w, h, flight, island) {
+  const mw = 176;
+  const mh = 122;
+  const mx = w / 2 - mw / 2;
+  const my = h - mh - 14;
+  panel(ctx, mx, my, mw, mh);
+  const R = CONFIG.islandRadius;
+  const toMap = (x, z) => [mx + mw / 2 + (x / (R * 1.15)) * (mw / 2 - 6), my + mh / 2 + (z / (R * 1.15)) * (mh / 2 - 6)];
+  // Sea and island.
+  ctx.fillStyle = '#1d5f8a';
+  ctx.beginPath();
+  ctx.roundRect(mx + 6, my + 6, mw - 12, mh - 12, 6);
+  ctx.fill();
+  ctx.fillStyle = '#5da24a';
+  ctx.beginPath();
+  ctx.arc(mx + mw / 2, my + mh / 2, (mw / 2 - 6) * (R / (R * 1.15)), 0, Math.PI * 2);
+  ctx.fill();
+  // Volcano.
+  const [vx, vy] = toMap(CONFIG.volcano.x, CONFIG.volcano.z);
+  ctx.fillStyle = '#6e6258';
+  ctx.beginPath();
+  ctx.arc(vx, vy, 5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#ff7a3c';
+  ctx.beginPath();
+  ctx.arc(vx, vy, 2, 0, Math.PI * 2);
+  ctx.fill();
+  // Runway.
+  const rw = CONFIG.runway;
+  const rh = (rw.heading * Math.PI) / 180;
+  const fwd = { x: Math.sin(rh), z: -Math.cos(rh) };
+  const [r1x, r1y] = toMap(rw.x - fwd.x * rw.length / 2, rw.z - fwd.z * rw.length / 2);
+  const [r2x, r2y] = toMap(rw.x + fwd.x * rw.length / 2, rw.z + fwd.z * rw.length / 2);
+  ctx.strokeStyle = '#e8e8e8';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(r1x, r1y);
+  ctx.lineTo(r2x, r2y);
+  ctx.stroke();
+  // Rings: passed green, next cyan, later gold.
+  island.rings.forEach((ring, i) => {
+    const [px, py] = toMap(ring.x, ring.z);
+    ctx.fillStyle = i < flight.nextRing ? '#39d353' : i === flight.nextRing ? '#22d3ee' : '#f5b942';
+    ctx.beginPath();
+    ctx.arc(px, py, i === flight.nextRing ? 4 : 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  // Bonus rings, gold diamonds.
+  for (const ring of island.bonusRings) {
+    if (flight._bonusHit && flight._bonusHit.has(ring.index)) continue;
+    const [px, py] = toMap(ring.x, ring.z);
+    ctx.fillStyle = '#ffd34d';
+    ctx.beginPath();
+    ctx.moveTo(px, py - 3);
+    ctx.lineTo(px + 3, py);
+    ctx.lineTo(px, py + 3);
+    ctx.lineTo(px - 3, py);
+    ctx.closePath();
+    ctx.fill();
+  }
+  // Storm beacon / cells.
+  if (flight.missionId === 'storm') {
+    for (const cell of island.stormCells) {
+      const [px, py] = toMap(cell.x, cell.z);
+      ctx.fillStyle = 'rgba(90, 80, 130, 0.9)';
+      ctx.beginPath();
+      ctx.arc(px, py, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const [bx, by] = toMap(island.beacon.x, island.beacon.z);
+    ctx.fillStyle = '#f5b942';
+    ctx.beginPath();
+    ctx.arc(bx, by, 4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // The plane: a white arrow pointing along its heading.
+  const [px, py] = toMap(flight.x, flight.z);
+  const ha = (flight.heading * Math.PI) / 180;
+  ctx.fillStyle = '#ffffff';
+  ctx.strokeStyle = '#0a1420';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(px + Math.sin(ha) * 8, py - Math.cos(ha) * 8);
+  ctx.lineTo(px + Math.sin(ha + 2.6) * 6, py - Math.cos(ha + 2.6) * 6);
+  ctx.lineTo(px + Math.sin(ha - 2.6) * 6, py - Math.cos(ha - 2.6) * 6);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = '#9fc6e8';
+  ctx.font = '10px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('MAP', mx + mw / 2, my + mh - 4);
+}
+
 function objectiveText(flight, island, mission) {
   if (flight.phase === 'landed') return 'Landed! Press R to fly again.';
+  if (flight.phase === 'down') return 'Down in the fields. Press R to try again.';
   if (flight.phase === 'crashed') return 'Crashed. Press R to try again.';
+  if (flight.phase === 'timeout') return 'Time up. Press R to try again.';
   if (flight.phase === 'complete') return 'Mission complete! Press R to fly again.';
   if (mission.id === 'rings') {
     return `Ring ${Math.min(flight.nextRing + 1, island.rings.length)} of ${island.rings.length} — follow the cyan gate`;
@@ -273,6 +372,8 @@ export function drawTitle(ctx, w, h, selectedMission, time) {
   ctx.font = '14px system-ui, sans-serif';
   ctx.fillText('W/S throttle · Arrow keys pitch & roll · F flaps · P pause · M mute · R restart', w / 2, h * 0.36 + 3 * 92 + 62);
   ctx.fillText('Land gently on the runway. Mind the fuel — and the volcano.', w / 2, h * 0.36 + 3 * 92 + 84);
+  ctx.fillStyle = '#ffd34d';
+  ctx.fillText('Gold bonus rings are worth +750 — if you dare to go low.', w / 2, h * 0.36 + 3 * 92 + 106);
 }
 
 export function drawPaused(ctx, w, h) {
@@ -295,7 +396,15 @@ export function drawEndScreen(ctx, w, h, flight, mission) {
   ctx.fillStyle = won ? '#39d353' : '#ff9a7a';
   ctx.font = 'bold 46px system-ui, sans-serif';
   ctx.fillText(
-    flight.phase === 'complete' ? 'MISSION COMPLETE' : flight.phase === 'landed' ? 'LANDED SAFELY' : 'CRASHED',
+    flight.phase === 'complete'
+      ? 'MISSION COMPLETE'
+      : flight.phase === 'landed'
+        ? 'LANDED SAFELY'
+        : flight.phase === 'down'
+          ? 'FORCED LANDING'
+          : flight.phase === 'timeout'
+            ? 'TIME UP'
+            : 'CRASHED',
     w / 2,
     h * 0.32,
   );

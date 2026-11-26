@@ -54,10 +54,16 @@ export function buildIsland(seed) {
     const hills = (noise(x / 260 + 5, z / 260 + 9) - 0.5) * 26 * smoothstep(R * 0.55, R * 0.2, d);
     let h = body + cone + hills;
     // Grade the ground around the runway down to the strip, so the strip
-    // sits in a flat apron instead of a trench through the hills.
+    // sits in a flat apron instead of a trench through the hills — and so
+    // the final approach, 200 m out on either end, is flat too. The apron
+    // fades out both sideways AND along the strip: past the strip ends the
+    // ground rises gently into the hills instead of a cliff at the apron's
+    // edge, so an overshoot reads as a field landing, not a wall.
     const l = runwayLocal(x, z);
-    if (Math.abs(l.along) < rw.length / 2 + 80) {
-      const blend = smoothstep(100, 30, Math.abs(l.across));
+    if (Math.abs(l.along) < rw.length / 2 + 220) {
+      const acrossBlend = smoothstep(160, 40, Math.abs(l.across));
+      const alongBlend = 1 - smoothstep(rw.length / 2 + 120, rw.length / 2 + 220, Math.abs(l.along));
+      const blend = acrossBlend * alongBlend;
       h = h * (1 - blend) + 4 * blend;
     }
     return h;
@@ -90,8 +96,8 @@ export function buildIsland(seed) {
     { x: 60, z: -80, y: 95 },
     { x: vol.x - 190, z: vol.z + 60, y: 150 },
     { x: vol.x + 60, z: vol.z - 230, y: 175 },
-    { x: 620, z: -420, y: 120 },
-    { x: 760, z: 180, y: 90 },
+    { x: 720, z: -240, y: 120 },
+    { x: 780, z: 180, y: 90 },
     { x: 300, z: 620, y: 80 },
     { x: rw.x + rFwd.x * 300, z: rw.z + rFwd.z * 300, y: 65 },
   ];
@@ -107,6 +113,15 @@ export function buildIsland(seed) {
     const cur = rings[i];
     cur.heading = Math.atan2(cur.x - prev.x, -(cur.z - prev.z));
   }
+
+  // ---- Bonus rings: small gold gates in tight spots, worth +750 each.
+  // One low over the south-east beach, one over the volcano crater, one
+  // low over the town rooftops. Optional in every mission: risk for reward.
+  const bonusRings = [
+    { x: 650, z: 520, y: 26, radius: 12, index: 0 },
+    { x: vol.x, z: vol.z, y: 208, radius: 12, index: 1 },
+    { x: CONFIG.town.x + 40, z: CONFIG.town.z - 30, y: 38, radius: 12, index: 2 },
+  ];
 
   // ---- Storm cells for the storm mission: a front of dark clouds across
   // the north-east, with the beacon at the far side.
@@ -164,6 +179,7 @@ export function buildIsland(seed) {
     onRunway,
     runwayLocal,
     rings,
+    bonusRings,
     stormCells,
     beacon,
     townBlocks,

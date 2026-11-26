@@ -27,8 +27,8 @@ export const CONFIG = {
     pitchRate: 0.9,
     turnRate: 0.55,
     fuelCapacity: 100,
-    fuelBurn: 1.6, // percent per second at full throttle
-    fuelBurnIdle: 0.25,
+    fuelBurn: 0.5, // percent per second at full throttle
+    fuelBurnIdle: 0.08,
     startFuel: 100,
   },
   // Missions.
@@ -62,6 +62,7 @@ export const CONFIG = {
   // Scoring.
   score: {
     ring: 500,
+    bonusRing: 750,
     ringTimeBonus: 8, // per second under par, at mission end
     landingSoft: 800,
     landingOk: 400,

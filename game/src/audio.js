@@ -128,6 +128,11 @@ export function createAudio() {
         tone(880, 0.16, 'sine', 0.25);
         tone(1318, 0.22, 'sine', 0.22, 0.08);
         break;
+      case 'bonus':
+        tone(1046, 0.14, 'sine', 0.25);
+        tone(1318, 0.14, 'sine', 0.25, 0.07);
+        tone(1568, 0.24, 'sine', 0.25, 0.14);
+        break;
       case 'beacon':
         tone(659, 0.18, 'triangle', 0.25);
         tone(988, 0.26, 'triangle', 0.22, 0.1);
@@ -136,6 +141,10 @@ export function createAudio() {
         noiseBurst(0.25, 0.3, 500);
         tone(392, 0.4, 'triangle', 0.2, 0.05);
         tone(523, 0.5, 'triangle', 0.2, 0.18);
+        break;
+      case 'down':
+        noiseBurst(0.35, 0.3, 400);
+        tone(330, 0.4, 'triangle', 0.18, 0.05);
         break;
       case 'hardlanding':
         noiseBurst(0.4, 0.45, 300);

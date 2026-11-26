@@ -59,8 +59,12 @@ export function newFlight(island, missionId) {
     groundSpeed: 0,
     landedOnRunway: false,
     stormHits: 0,
+    bonusRings: 0,
+    _bonusHit: new Set(),
+    _fuelOutAnnounced: false,
     _stormCooldown: 0,
     _takeoffDone: false,
+    _airborne: false,
   };
   return flight;
 }
@@ -76,16 +80,17 @@ export function stepFlight(flight, input, dt, island) {
   flight.timeLeft -= dt;
   if (flight.timeLeft <= 0) {
     flight.timeLeft = 0;
-    if (flight.missionId === 'rings' || flight.missionId === 'storm') {
-      endFlight(flight, 'complete', 'Time up — sortie over.');
-      events.push('timeout');
-      return events;
-    }
+    endFlight(flight, 'timeout', 'Time up — sortie over.');
+    events.push('timeout');
+    return events;
   }
   if (flight.messageTimer > 0) flight.messageTimer -= dt;
 
   // --- Controls -----------------------------------------------------------
-  const onGround = flight.y <= island.heightAt(flight.x, flight.z) + 0.05;
+  // "On the ground" means actually touching it: a +0.05 tolerance here
+  // used to leave a stalled, powerless plane hovering 5 cm up forever,
+  // because the tolerance also switched off the stall sink.
+  const onGround = flight.y <= island.heightAt(flight.x, flight.z);
   if (input.throttleUp) flight.throttle = clamp(flight.throttle + dt * 0.7, 0, 1);
   if (input.throttleDown) flight.throttle = clamp(flight.throttle - dt * 0.7, 0, 1);
   if (input.flapsToggle) {
@@ -101,7 +106,15 @@ export function stepFlight(flight, input, dt, island) {
   let pitchInput = 0;
   if (input.pitchUp) pitchInput += 1;
   if (input.pitchDown) pitchInput -= 1;
-  const pitchTarget = pitchInput * (flight.flaps ? 16 : 22);
+  // Flare zone: flaps down, slow and low over the ground — the plane
+  // trims itself for a gentle arrival, so a landing is a matter of holding
+  // her steady rather than threading a 3-degree needle by hand. Nose-down
+  // is capped at -4 degrees here: the sink stays near 3 m/s, a touchdown
+  // reads as a landing instead of a lawn dart.
+  const groundNow = island.heightAt(flight.x, flight.z);
+  const flareZone = flight.flaps && flight.speed < 52 && flight.y - groundNow < 45;
+  let pitchTarget = pitchInput * (flight.flaps ? 16 : 22);
+  if (flareZone) pitchTarget = Math.max(-4, Math.min(16, pitchTarget));
   flight.pitch += (pitchTarget - flight.pitch) * clamp(dt * 3.2 * authority, 0, 1);
   if (stall && !onGround) flight.pitch -= dt * 6; // nose drops in a stall
 
@@ -125,9 +138,13 @@ export function stepFlight(flight, input, dt, island) {
   const pitchRad = (flight.pitch * Math.PI) / 180;
   const liftFactor = clamp(flight.speed / P.stallSpeed, 0, 1.4);
   let climb = Math.sin(pitchRad) * flight.speed * liftFactor;
-  if (flight.flaps && flight.speed > 18) climb += 1.5;
+  if (flight.flaps && flight.speed > 18) climb += 0.3;
   if (stall && !onGround) climb -= P.sinkRate * 0.6;
   if (flight.throttle < 0.05 && flight.speed < P.stallSpeed && !onGround) climb -= 2;
+  // Gravity on speed: a dive builds speed, a climb bleeds it — so a stall
+  // is recovered by nosing down, and holding a climb takes throttle.
+  flight.speed += -Math.sin(pitchRad) * 9.8 * dt * 0.55;
+  if (flight.speed < 0) flight.speed = 0;
   flight.verticalSpeed = climb;
   flight.y += climb * dt;
   flight.x += fwd.x * flight.speed * Math.cos(pitchRad) * dt;
@@ -138,29 +155,41 @@ export function stepFlight(flight, input, dt, island) {
   if (!flight._takeoffDone && !onGround && flight.y > island.heightAt(flight.x, flight.z) + 2) {
     flight._takeoffDone = true;
   }
+  // Airborne means the plane has properly left the ground; only then can
+  // touching down again be a landing (or a crash). A take-off roll is just
+  // rolling, however much the nose bounces.
+  if (!onGround && flight.y > island.heightAt(flight.x, flight.z) + 3) flight._airborne = true;
 
   // --- Fuel ----------------------------------------------------------------
   const burn = (flight.throttle * P.fuelBurn + P.fuelBurnIdle) * dt;
   flight.fuel = Math.max(0, flight.fuel - burn);
   if (flight.fuel <= 0 && flight.throttle > 0) {
     flight.throttle = 0;
-    events.push('fuelout');
-    flight.message = 'FUEL EMPTY — gliding!';
-    flight.messageTimer = 3;
+    if (!flight._fuelOutAnnounced) {
+      flight._fuelOutAnnounced = true;
+      events.push('fuelout');
+      flight.message = 'FUEL EMPTY — gliding!';
+      flight.messageTimer = 3;
+    }
   }
 
   // --- Ground contact ------------------------------------------------------
   const ground = island.heightAt(flight.x, flight.z);
   if (flight.y <= ground) {
     flight.y = ground;
+    if (!flight._airborne) {
+      // Still on the take-off roll (or taxiing): roll along, nose level,
+      // no landing verdict and no damage, whatever the bumps.
+      flight.pitch *= 0.9;
+    } else {
     const vs = -flight.verticalSpeed;
     const onStrip = island.onRunway(flight.x, flight.z);
-    const gentle = vs < 3.2 && Math.abs(flight.roll) < 12 && flight.groundSpeed < 55;
+    const gentle = vs < 4.0 && Math.abs(flight.roll) < 12 && flight.groundSpeed < 55;
     if (flight.speed > 8) {
       // Touchdown while still moving: landing or crash.
       if (onStrip && gentle) {
         flight.phase = 'landed';
-        flight.touchdownQuality = vs < 1.6 ? 'soft' : 'ok';
+        flight.touchdownQuality = vs < 2.0 ? 'soft' : 'ok';
         flight.landedOnRunway = true;
         const bonus = flight.touchdownQuality === 'soft' ? CONFIG.score.landingSoft : CONFIG.score.landingOk;
         if (flight.missionId === 'landing' && flight.volcanoRounded) {
@@ -174,7 +203,7 @@ export function stepFlight(flight, input, dt, island) {
         }
         flight.message = flight.touchdownQuality === 'soft' ? 'BUTTER-SMOOTH LANDING!' : 'Down safe on the runway.';
         flight.messageTimer = 4;
-      } else if (onStrip && vs < 6 && flight.groundSpeed < 70) {
+      } else if (onStrip && vs < 7 && flight.groundSpeed < 70) {
         // Hard but survivable runway arrival: bounce, take damage.
         flight.damage = clamp(flight.damage + 25, 0, 100);
         flight.y = ground + 1.5;
@@ -200,7 +229,13 @@ export function stepFlight(flight, input, dt, island) {
         flight.touchdownQuality = 'ok';
         flight.score += CONFIG.score.landingOk;
         events.push('landed');
+      } else if (flight.phase === 'flying' && flight.speed <= 0.5) {
+        // Came to a stop off the runway: a forced landing in the fields.
+        // The sortie ends here instead of hanging until the timer runs out.
+        endFlight(flight, 'down', 'Forced landing in the fields — the sortie ends here.');
+        events.push('down');
       }
+    }
     }
     if (flight.phase === 'flying' && onGround) {
       // Taxiing: keep the nose level.
@@ -217,6 +252,20 @@ export function stepFlight(flight, input, dt, island) {
 
   // --- Mission logic --------------------------------------------------------
   if (flight.phase === 'flying') {
+    // Bonus rings: small gold gates in tight spots, worth +750 each, in
+    // every mission. They reward a pilot who risks a detour.
+    for (const ring of island.bonusRings) {
+      if (flight._bonusHit.has(ring.index)) continue;
+      const d = Math.hypot(flight.x - ring.x, flight.z - ring.z, flight.y - ring.y);
+      if (d < ring.radius + 5) {
+        flight._bonusHit.add(ring.index);
+        flight.bonusRings++;
+        flight.score += CONFIG.score.bonusRing;
+        flight.message = `BONUS RING +${CONFIG.score.bonusRing}!`;
+        flight.messageTimer = 2;
+        events.push('bonus');
+      }
+    }
     if (flight.missionId === 'rings') {
       const ring = island.rings[flight.nextRing];
       if (ring) {
@@ -277,7 +326,6 @@ export function stepFlight(flight, input, dt, island) {
   // World edge: turn the pilot back with a warning instead of a void.
   const dist = Math.hypot(flight.x, flight.z);
   if (dist > 1600) {
-    const back = Math.atan2(-flight.x, flight.z);
     flight.heading = (headingFromVector(-flight.x, -flight.z) + 360) % 360;
     flight.message = 'Turn back — open sea ahead!';
     flight.messageTimer = 2;
